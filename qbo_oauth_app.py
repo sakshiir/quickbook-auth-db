@@ -40,6 +40,7 @@ QBO_ENV = (os.getenv("QBO_ENV", "sandbox") or "sandbox").lower()
 AUTH_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 USERINFO_URL = "https://accounts.platform.intuit.com/v1/openid_connect/userinfo"
+CONF_URL = 'https://developer.api.intuit.com/.well-known/openid_configuration/'
 
 API_BASE = (
     "https://sandbox-quickbooks.api.intuit.com"
@@ -61,6 +62,7 @@ intuit = oauth.register(
     authorize_url=AUTH_URL,
     access_token_url=TOKEN_URL,
     api_base_url=API_BASE,
+    server_metadata_url=CONF_URL,
     client_kwargs={"scope": SCOPE},
 )
 
