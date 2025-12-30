@@ -1,0 +1,10 @@
+Flask
+Authlib
+requests
+psycopg2-binary
+python-dotenv
+cryptography
+werkzeug
+sqlalchemy[psycopg2-binary]
+gunicorn
+jwt

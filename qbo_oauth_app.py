@@ -2,20 +2,29 @@ import os
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-
 import requests
-import psycopg2
+from authlib.common.security import generate_token
+
 from dotenv import load_dotenv
-from flask import Flask, request, redirect, url_for, jsonify, render_template_string
+from flask import Flask, request, redirect, url_for, jsonify, render_template_string, session
 from authlib.integrations.flask_client import OAuth
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+import psycopg2.extensions
+import psycopg2
+import jwt
 
 # ------------------------------------------------------------------
 # App setup
 # ------------------------------------------------------------------
 load_dotenv()
+PG_DB_URL = os.environ.get("PG_DB_URL")
 
 APP = Flask(__name__)
 APP.secret_key = os.urandom(32)
+APP.wsgi_app = ProxyFix(APP.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 CLIENT_ID = os.getenv("INTUIT_CLIENT_ID")
 CLIENT_SECRET = os.getenv("INTUIT_CLIENT_SECRET")
@@ -38,6 +47,7 @@ SCOPE = "com.intuit.quickbooks.accounting openid email profile"
 # OAuth client
 # ------------------------------------------------------------------
 oauth = OAuth(APP)
+
 intuit = oauth.register(
     name="intuit",
     client_id=CLIENT_ID,
@@ -49,27 +59,28 @@ intuit = oauth.register(
 )
 
 # ------------------------------------------------------------------
-# Database helpers
+# Database connections
 # ------------------------------------------------------------------
-def get_db_conn():
-    return psycopg2.connect(
-        host=os.getenv("PG_HOST"),
-        port=os.getenv("PG_PORT", 5432),
-        dbname=os.getenv("PG_DATABASE"),
-        user=os.getenv("PG_USER"),
-        password=os.getenv("PG_PASSWORD"),
-    )
+if PG_DB_URL:
+    engine = create_engine(PG_DB_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_db_conn() -> Session:
+    if SessionLocal is None:
+        raise ValueError("PG_DB_URL environment variable not set. Database connection cannot be established.")
+    return psycopg2.connect(os.environ.get("PG_DB_URL"))
 
 
-def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str | None):
+def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None):
     conn = get_db_conn()
     cur = conn.cursor()
 
     issued_at = datetime.now(timezone.utc)
     expires_in = token.get("expires_in")
-    access_expiry = (
-        issued_at.timestamp() + expires_in if expires_in else None
-    )
+    access_expiry = issued_at.timestamp() + expires_in if expires_in else None
+    
+    refresh_expires_in = token.get("x_refresh_token_expires_in")
+    refresh_expiry = issued_at.timestamp() + refresh_expires_in if refresh_expires_in else None
 
     cur.execute(
         """
@@ -80,21 +91,25 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str | None):
             refresh_token,
             token_type,
             expires_in,
+            refresh_expires_in,
             issued_at_utc,
             access_token_expires_at,
+            refresh_token_expires_at,
             qbo_environment,
             client_id,
             created_at,
             updated_at
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),%s,%s,now(),now())
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),to_timestamp(%s),%s,%s,now(),now())
         ON CONFLICT (realm_id, qbo_environment)
         DO UPDATE SET
             access_token = EXCLUDED.access_token,
             refresh_token = EXCLUDED.refresh_token,
             expires_in = EXCLUDED.expires_in,
+            refresh_expires_in = EXCLUDED.refresh_expires_in,
             issued_at_utc = EXCLUDED.issued_at_utc,
             access_token_expires_at = EXCLUDED.access_token_expires_at,
+            refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
             intuit_email = EXCLUDED.intuit_email,
             updated_at = now();
         """,
@@ -105,8 +120,10 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str | None):
             token.get("refresh_token"),
             token.get("token_type", "bearer"),
             expires_in,
+            refresh_expires_in,
             issued_at,
             access_expiry,
+            refresh_expiry,
             QBO_ENV,
             CLIENT_ID,
         ),
@@ -115,8 +132,6 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str | None):
     conn.commit()
     cur.close()
     conn.close()
-
-
 # ------------------------------------------------------------------
 # UI
 # ------------------------------------------------------------------
@@ -151,31 +166,26 @@ def home():
 # ------------------------------------------------------------------
 @APP.route("/start")
 def start():
+    print(f"DEBUG: Redirect URI being sent: {REDIRECT_URI}")
     return intuit.authorize_redirect(REDIRECT_URI, prompt="consent")
-
 
 @APP.route("/callback")
 def callback():
     token = intuit.authorize_access_token()
     realm_id = request.args.get("realmId")
 
-    # Fetch Intuit user profile (email)
     intuit_email = None
-    try:
-        r = requests.get(
+    if token.get("access_token"):
+        resp = intuit.get(
             USERINFO_URL,
-            headers={"Authorization": f"Bearer {token['access_token']}"},
-            timeout=10,
+            token=token,
         )
-        if r.status_code == 200:
-            intuit_email = r.json().get("email")
-    except Exception:
-        pass
+        if resp.status_code == 200:
+            intuit_email = resp.json().get("email")
 
     upsert_qbo_token(token, realm_id, intuit_email)
 
     return redirect(url_for("peek"))
-
 
 # ------------------------------------------------------------------
 # Peek from database
@@ -219,4 +229,4 @@ def peek():
 # Local dev only
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    APP.run(host="127.0.0.1", port=5000, debug=True)
+    APP.run(host="localhost", port=5000, debug=True)

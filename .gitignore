@@ -8,3 +8,6 @@ __pycache__/
 
 qbo_auth_tokens.xlsx
 qbo_auth_tokens.csv
+
+qbo_oauth_app_dev.py
+token_store.py
