@@ -26,6 +26,12 @@ APP = Flask(__name__)
 APP.secret_key = os.urandom(32)
 APP.wsgi_app = ProxyFix(APP.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+APP.config.update(
+    SESSION_COOKIE_SECURE=True,    # Required because you are using HTTPS
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax', # Crucial for OAuth redirects
+)
+
 CLIENT_ID = os.getenv("INTUIT_CLIENT_ID")
 CLIENT_SECRET = os.getenv("INTUIT_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("INTUIT_REDIRECT_URI")
@@ -72,66 +78,74 @@ def get_db_conn() -> Session:
 
 
 def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None):
-    conn = get_db_conn()
-    cur = conn.cursor()
+    try: 
+        conn = get_db_conn()
+        cur = conn.cursor()
 
-    issued_at = datetime.now(timezone.utc)
-    expires_in = token.get("expires_in")
-    access_expiry = issued_at.timestamp() + expires_in if expires_in else None
-    
-    refresh_expires_in = token.get("x_refresh_token_expires_in")
-    refresh_expiry = issued_at.timestamp() + refresh_expires_in if refresh_expires_in else None
+        issued_at = datetime.now(timezone.utc)
+        expires_in = token.get("expires_in")
+        access_expiry = issued_at.timestamp() + expires_in if expires_in else None
+        
+        refresh_expires_in = token.get("x_refresh_token_expires_in")
+        refresh_expiry = issued_at.timestamp() + refresh_expires_in if refresh_expires_in else None
 
-    cur.execute(
-        """
-        INSERT INTO config.qbo_oauth_tokens (
-            realm_id,
-            intuit_email,
-            access_token,
-            refresh_token,
-            token_type,
-            expires_in,
-            refresh_expires_in,
-            issued_at_utc,
-            access_token_expires_at,
-            refresh_token_expires_at,
-            qbo_environment,
-            client_id,
-            created_at,
-            updated_at
+        cur.execute(
+            """
+            INSERT INTO config.qbo_oauth_tokens (
+                realm_id,
+                intuit_email,
+                access_token,
+                refresh_token,
+                token_type,
+                expires_in,
+                refresh_expires_in,
+                issued_at_utc,
+                access_token_expires_at,
+                refresh_token_expires_at,
+                qbo_environment,
+                client_id,
+                created_at,
+                updated_at
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),to_timestamp(%s),%s,%s,now(),now())
+            ON CONFLICT (realm_id, qbo_environment)
+            DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = EXCLUDED.refresh_token,
+                expires_in = EXCLUDED.expires_in,
+                refresh_expires_in = EXCLUDED.refresh_expires_in,
+                issued_at_utc = EXCLUDED.issued_at_utc,
+                access_token_expires_at = EXCLUDED.access_token_expires_at,
+                refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
+                intuit_email = EXCLUDED.intuit_email,
+                updated_at = now();
+            """,
+            (
+                realm_id,
+                intuit_email,
+                token.get("access_token"),
+                token.get("refresh_token"),
+                token.get("token_type", "bearer"),
+                expires_in,
+                refresh_expires_in,
+                issued_at,
+                access_expiry,
+                refresh_expiry,
+                QBO_ENV,
+                CLIENT_ID,
+            ),
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),to_timestamp(%s),%s,%s,now(),now())
-        ON CONFLICT (realm_id, qbo_environment)
-        DO UPDATE SET
-            access_token = EXCLUDED.access_token,
-            refresh_token = EXCLUDED.refresh_token,
-            expires_in = EXCLUDED.expires_in,
-            refresh_expires_in = EXCLUDED.refresh_expires_in,
-            issued_at_utc = EXCLUDED.issued_at_utc,
-            access_token_expires_at = EXCLUDED.access_token_expires_at,
-            refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
-            intuit_email = EXCLUDED.intuit_email,
-            updated_at = now();
-        """,
-        (
-            realm_id,
-            intuit_email,
-            token.get("access_token"),
-            token.get("refresh_token"),
-            token.get("token_type", "bearer"),
-            expires_in,
-            refresh_expires_in,
-            issued_at,
-            access_expiry,
-            refresh_expiry,
-            QBO_ENV,
-            CLIENT_ID,
-        ),
-    )
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"PROD ERROR: Database upsert failed: {e}")
+        if conn: conn.rollback()
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
 # ------------------------------------------------------------------
 # UI
 # ------------------------------------------------------------------
@@ -229,4 +243,4 @@ def peek():
 # Local dev only
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    APP.run(host="localhost", port=5000, debug=True)
+    APP.run(host="127.0.0.1", port=5000, debug=True)
