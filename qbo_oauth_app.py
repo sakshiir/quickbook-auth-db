@@ -73,7 +73,7 @@ def get_db_conn():
         raise ValueError("PG_DB_URL environment variable not set.")
     return psycopg2.connect(PG_DB_URL)
 
-def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None):
+def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None, intuit_user_id: str = None):
     conn = None
     cur = None
     try: 
@@ -90,12 +90,12 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None):
         cur.execute(
             """
             INSERT INTO config.qbo_oauth_tokens (
-                realm_id, intuit_email, access_token, refresh_token,
+                realm_id, intuit_user_id,intuit_email, access_token, refresh_token,
                 token_type, expires_in, refresh_expires_in, issued_at_utc,
                 access_token_expires_at, refresh_token_expires_at,
                 qbo_environment, client_id, created_at, updated_at
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),to_timestamp(%s),%s,%s,now(),now())
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),to_timestamp(%s),%s,%s,now(),now())
             ON CONFLICT (realm_id, qbo_environment)
             DO UPDATE SET
                 access_token = EXCLUDED.access_token,
@@ -105,6 +105,7 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None):
                 issued_at_utc = EXCLUDED.issued_at_utc,
                 access_token_expires_at = EXCLUDED.access_token_expires_at,
                 refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
+                intuit_user_id = EXCLUDED.intuit_user_id,
                 intuit_email = EXCLUDED.intuit_email,
                 updated_at = now();
             """,
@@ -157,12 +158,12 @@ def home():
 # ------------------------------------------------------------------
 @APP.route("/start")
 def start():
-    # session.permanent = True # Authlib handles the nonce generation/storage automatically here
-    # return intuit.authorize_redirect(REDIRECT_URI)
-    nonce = generate_token()
-    session['nonce'] = nonce
-    print(f"DEBUG: Redirecting with nonce: {nonce}")
-    return intuit.authorize_redirect(REDIRECT_URI, nonce=nonce, prompt="consent")
+    # nonce = generate_token()
+    # session['nonce'] = nonce
+    # print(f"DEBUG: Redirecting with nonce: {nonce}")
+    # return intuit.authorize_redirect(REDIRECT_URI, nonce=nonce, prompt="consent")
+    session.permanent = True # Authlib handles the nonce generation/storage automatically here
+    return intuit.authorize_redirect(REDIRECT_URI, prompt="consent")
 
 @APP.route("/callback")
 def callback():
@@ -201,9 +202,10 @@ def callback():
         )
         if r.status_code == 200:
             intuit_email = r.json().get("email")
+            intuit_user_id = r.json().get("sub")
 
         # 3. Persist
-        upsert_qbo_token(token, realm_id, intuit_email)
+        upsert_qbo_token(token, realm_id, intuit_email,intuit_user_id)
 
         return redirect(url_for("peek"))
 
