@@ -164,6 +164,9 @@ def callback():
     code = request.args.get("code")
     realm_id = request.args.get("realmId")
 
+    if not code or not realm_id:
+        return "Missing authorization code or realmId", 400
+
     try:
         # 1. Exchange code for token
         response = requests.post(
@@ -176,23 +179,37 @@ def callback():
             },
             timeout=10
         )
-        
+        response.raise_for_status()
+
         token = response.json()
         access_token = token.get("access_token")
 
-        # 2. Fetch Email from UserInfo Endpoint
-        intuit_email = None
-        if access_token:
-            r = requests.get(
-                USERINFO_URL,
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=10
-            )
-            if r.status_code == 200:
-                intuit_email = r.json().get("email")
+        if not access_token:
+            return "Access token missing in response", 400
 
+        # 2. Fetch email from UserInfo
+        intuit_email = None
+        r = requests.get(
+            USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            intuit_email = r.json().get("email")
+
+        # 3. Persist
         upsert_qbo_token(token, realm_id, intuit_email)
+
         return redirect(url_for("peek"))
+
+    except requests.RequestException as e:
+        print(f"HTTP error during OAuth callback: {e}")
+        return "OAuth communication failed", 502
+
+    except Exception as e:
+        print(f"Unexpected OAuth callback error: {e}")
+        return "Authentication failed", 500
+
 
 # ------------------------------------------------------------------
 # Peek from database
