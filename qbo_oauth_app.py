@@ -7,6 +7,7 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, request, redirect, url_for, jsonify, render_template_string, session
 from authlib.integrations.flask_client import OAuth
+from authlib.common.security import generate_token
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import psycopg2
@@ -38,7 +39,12 @@ REDIRECT_URI = os.getenv("INTUIT_REDIRECT_URI")
 QBO_ENV = (os.getenv("QBO_ENV", "sandbox") or "sandbox").lower()
 
 CONF_URL = 'https://developer.api.intuit.com/.well-known/openid_configuration/'
+AUTH_URL = "https://appcenter.intuit.com/connect/oauth2"
+TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+USERINFO_URL = "https://accounts.platform.intuit.com/v1/openid_connect/userinfo"
+
 API_BASE = "https://sandbox-quickbooks.api.intuit.com" if QBO_ENV == "sandbox" else "https://quickbooks.api.intuit.com"
+SCOPE = "com.intuit.quickbooks.accounting openid email profile"
 
 # ------------------------------------------------------------------
 # OAuth client
@@ -52,7 +58,6 @@ intuit = oauth.register(
     authorize_url=AUTH_URL,
     access_token_url=TOKEN_URL,
     api_base_url=API_BASE,
-    server_metadata_url=CONF_URL,
     client_kwargs={"scope": SCOPE}
 
     #server_metadata_url=CONF_URL, 
