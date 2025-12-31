@@ -55,7 +55,7 @@ intuit = oauth.register(
         "token_endpoint_auth_method": "client_secret_basic", # Correct Auth for QBO
     },
     # Setting this to True allows Authlib to manage the nonce in the session automatically
-    id_token_params={"nonce": True}
+    id_token_params={"nonce": None, "validate_nonce": False}
 )
 
 # ------------------------------------------------------------------
@@ -156,7 +156,7 @@ def start():
 @APP.route("/callback")
 def callback():
     # This automatically validates 'state' and 'nonce' from the session
-    token = intuit.authorize_access_token()
+    token = intuit.authorize_access_token(authorization_response=request.url)
     realm_id = request.args.get("realmId")
     intuit_email = token.get('userinfo', {}).get('email')
     upsert_qbo_token(token, realm_id, intuit_email)
