@@ -49,13 +49,15 @@ intuit = oauth.register(
     name="intuit",
     client_id=CLIENT_ID,
     client_secret=CLIENT_SECRET,
+    authorize_url=AUTH_URL,
+    access_token_url=TOKEN_URL,
+    api_base_url=API_BASE,
     server_metadata_url=CONF_URL,
-    client_kwargs={
-        "scope": "com.intuit.quickbooks.accounting openid email profile",
-        "token_endpoint_auth_method": "client_secret_basic", # Correct Auth for QBO
-    },
+    client_kwargs={"scope": SCOPE}
+
+    #server_metadata_url=CONF_URL, 
     # Setting this to True allows Authlib to manage the nonce in the session automatically
-    id_token_params={"nonce": None, "validate_nonce": False}
+    #id_token_params={"nonce": None, "validate_nonce": False}
 )
 
 # ------------------------------------------------------------------
@@ -150,17 +152,47 @@ def home():
 # ------------------------------------------------------------------
 @APP.route("/start")
 def start():
-    session.permanent = True # Authlib handles the nonce generation/storage automatically here
-    return intuit.authorize_redirect(REDIRECT_URI)
+    # session.permanent = True # Authlib handles the nonce generation/storage automatically here
+    # return intuit.authorize_redirect(REDIRECT_URI)
+    nonce = generate_token()
+    session['nonce'] = nonce
+    print(f"DEBUG: Redirecting with nonce: {nonce}")
+    return intuit.authorize_redirect(REDIRECT_URI, nonce=nonce, prompt="consent")
 
 @APP.route("/callback")
 def callback():
-    # This automatically validates 'state' and 'nonce' from the session
-    token = intuit.authorize_access_token(authorization_response=request.url)
+    code = request.args.get("code")
     realm_id = request.args.get("realmId")
-    intuit_email = token.get('userinfo', {}).get('email')
-    upsert_qbo_token(token, realm_id, intuit_email)
-    return redirect(url_for("peek"))
+
+    try:
+        # 1. Exchange code for token
+        response = requests.post(
+            TOKEN_URL,
+            auth=(CLIENT_ID, CLIENT_SECRET),
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+            },
+            timeout=10
+        )
+        
+        token = response.json()
+        access_token = token.get("access_token")
+
+        # 2. Fetch Email from UserInfo Endpoint
+        intuit_email = None
+        if access_token:
+            r = requests.get(
+                USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10
+            )
+            if r.status_code == 200:
+                intuit_email = r.json().get("email")
+
+        upsert_qbo_token(token, realm_id, intuit_email)
+        return redirect(url_for("peek"))
 
 # ------------------------------------------------------------------
 # Peek from database
