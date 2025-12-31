@@ -90,7 +90,7 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None, intui
         cur.execute(
             """
             INSERT INTO config.qbo_oauth_tokens (
-                realm_id, intuit_user_id,intuit_email, access_token, refresh_token,
+                realm_id, intuit_user_id, intuit_email, access_token, refresh_token,
                 token_type, expires_in, refresh_expires_in, issued_at_utc,
                 access_token_expires_at, refresh_token_expires_at,
                 qbo_environment, client_id, created_at, updated_at
@@ -110,7 +110,7 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None, intui
                 updated_at = now();
             """,
             (
-                realm_id, intuit_email, token.get("access_token"),
+                realm_id, intuit_user_id, intuit_email, token.get("access_token"),
                 token.get("refresh_token"), token.get("token_type", "bearer"),
                 expires_in, refresh_expires_in, issued_at,
                 access_expiry, refresh_expiry, QBO_ENV, CLIENT_ID,
@@ -158,19 +158,19 @@ def home():
 # ------------------------------------------------------------------
 @APP.route("/start")
 def start():
-    # nonce = generate_token()
-    # session['nonce'] = nonce
-    # print(f"DEBUG: Redirecting with nonce: {nonce}")
-    # return intuit.authorize_redirect(REDIRECT_URI, nonce=nonce, prompt="consent")
-    session.permanent = True # Authlib handles the nonce generation/storage automatically here
-    return intuit.authorize_redirect(REDIRECT_URI, prompt="consent")
+    nonce = generate_token()
+    session['nonce'] = nonce
+    print(f"DEBUG: Redirecting with nonce: {nonce}")
+    return intuit.authorize_redirect(REDIRECT_URI, nonce=nonce, prompt="consent")
+    # session.permanent = True # Authlib handles the nonce generation/storage automatically here
+    # return intuit.authorize_redirect(REDIRECT_URI, prompt="consent")
 
 @APP.route("/callback")
 def callback():
     code = request.args.get("code")
     realm_id = request.args.get("realmId")
 
-    if not code or not realm_id:
+    if not code: #or not realm_id:
         return "Missing authorization code or realmId", 400
 
     try:
@@ -195,6 +195,7 @@ def callback():
 
         # 2. Fetch email from UserInfo
         intuit_email = None
+        intuit_user_id = None
         r = requests.get(
             USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
