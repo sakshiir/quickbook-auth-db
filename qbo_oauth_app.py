@@ -54,7 +54,7 @@ intuit = oauth.register(
         "scope": "com.intuit.quickbooks.accounting openid email profile",
         "token_endpoint_auth_method": "client_secret_basic", # Correct Auth for QBO
     },
-    # This line fixes the 'Missing Nonce' error
+    # Setting this to True allows Authlib to manage the nonce in the session automatically
     id_token_params={"nonce": True}
 )
 
@@ -116,35 +116,55 @@ def upsert_qbo_token(token: dict, realm_id: str, intuit_email: str = None):
         if cur: cur.close()
         if conn: conn.close()
 
+
 # ------------------------------------------------------------------
-# Routes
+# UI
 # ------------------------------------------------------------------
+HOME = """
+<!doctype html>
+<html>
+  <body style="font-family: system-ui; max-width: 720px; margin: 2rem auto;">
+    <h1>QBO OAuth → PostgreSQL</h1>
+    <p>
+      <a href="{{ url_for('start') }}"
+         style="padding:10px 14px;background:#111;color:#fff;text-decoration:none;border-radius:6px;">
+         Authenticate in Browser
+      </a>
+    </p>
+    <p>
+      <a href="{{ url_for('peek') }}">Peek (DB)</a>
+    </p>
+    <hr/>
+    <p>Redirect URI must match: <code>{{ redirect_uri }}</code></p>
+  </body>
+</html>
+"""
+
+
 @APP.route("/")
 def home():
-    return render_template_string("""
-    <h1>QBO OAuth Production</h1>
-    <p><a href="{{ url_for('start') }}">Authenticate in Browser</a></p>
-    <p><a href="{{ url_for('peek') }}">View Tokens (Peek)</a></p>
-    """, redirect_uri=REDIRECT_URI)
+    return render_template_string(HOME, redirect_uri=REDIRECT_URI)
 
+# ------------------------------------------------------------------
+# OAuth flow
+# ------------------------------------------------------------------
 @APP.route("/start")
 def start():
-    # Make session permanent so the browser remembers the state
-    session.permanent = True
+    session.permanent = True # Authlib handles the nonce generation/storage automatically here
     return intuit.authorize_redirect(REDIRECT_URI)
 
 @APP.route("/callback")
 def callback():
-    # Authlib handles state and nonce validation here
+    # This automatically validates 'state' and 'nonce' from the session
     token = intuit.authorize_access_token()
     realm_id = request.args.get("realmId")
-
-    # Get user email for identification
     intuit_email = token.get('userinfo', {}).get('email')
-    
     upsert_qbo_token(token, realm_id, intuit_email)
     return redirect(url_for("peek"))
 
+# ------------------------------------------------------------------
+# Peek from database
+# ------------------------------------------------------------------
 @APP.route("/peek")
 def peek():
     conn = get_db_conn()
