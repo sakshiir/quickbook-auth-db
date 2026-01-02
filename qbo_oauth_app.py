@@ -56,8 +56,8 @@ intuit = oauth.register(
     client_id=CLIENT_ID,
     client_secret=CLIENT_SECRET,
     authorize_url=AUTH_URL,
-    access_token_url=TOKEN_URL,
-    api_base_url=API_BASE,
+    # access_token_url=TOKEN_URL,
+    # api_base_url=API_BASE,
     client_kwargs={"scope": SCOPE}
 
     #server_metadata_url=CONF_URL, 
@@ -158,35 +158,53 @@ def home():
 # ------------------------------------------------------------------
 @APP.route("/start")
 def start():
-    # nonce = generate_token()
-    # session['nonce'] = nonce
-    # print(f"DEBUG: Redirecting with nonce: {nonce}")
-    # return intuit.authorize_redirect(REDIRECT_URI, nonce=nonce, prompt="consent")
     session.permanent = True # Authlib handles the nonce generation/storage automatically here
     return intuit.authorize_redirect(REDIRECT_URI, prompt="consent")
 
 @APP.route("/callback")
 def callback():
-    token = intuit.authorize_access_token()
+    code = request.args.get("code")
     realm_id = request.args.get("realmId")
-    
-    intuit_email, intuit_user_id = None, None
+
     try:
-        r = requests.get(
-            USERINFO_URL,
-            headers={"Authorization": f"Bearer {token['access_token']}"},
+        # Exchange code for token
+        response = requests.post(
+            TOKEN_URL,
+            auth=(CLIENT_ID, CLIENT_SECRET),
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+            },
             timeout=10
         )
-        if r.status_code == 200:
-            data = r.json()
-            intuit_email = data.get("email")
-            intuit_user_id = data.get("sub")
-    except Exception:
-        pass
+        
+        token = response.json()
+        access_token = token.get("access_token")
+
+        # Fetch Email from UserInfo Endpoint
+        intuit_email = None
+        intuit_user_id = None
+        if access_token:
+            user_info_resp = requests.get(
+                USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10
+            )
+            if user_info_resp.status_code == 200:
+                data = user_info_resp.json()
+                intuit_email = data.get("email")
+                intuit_user_id = data.get("sub")
+                print(f"DEBUG:  Successfully fetched email: {intuit_email}")
+            else:
+                print(f"DEBUG: UserInfo failed with status {user_info_resp.status_code}: {user_info_resp.text}")
+
+    except Exception as e:
+        print(f"CALLBACK ERROR: {e}")
+        return f"Authentication failed: {e}", 400
 
     # Persist token + user info
     upsert_qbo_token(token, realm_id, intuit_email, intuit_user_id)
-
     return "OIDC token + user info received successfully!"
 
 
