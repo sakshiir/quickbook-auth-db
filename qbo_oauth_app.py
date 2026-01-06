@@ -21,7 +21,7 @@ PG_DB_URL = os.environ.get("PG_DB_URL")
 
 APP = Flask(__name__)
 # Use a consistent secret key for production to keep sessions valid across restarts
-APP.secret_key = os.getenv("FLASK_SECRET_KEY", "prod-session-secret-9911")
+APP.secret_key = os.environ.get("FLASK_SECRET_KEY")
 
 # Tell Flask it's behind Nginx (fixes MismatchingStateError)
 APP.wsgi_app = ProxyFix(APP.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -56,13 +56,7 @@ intuit = oauth.register(
     client_id=CLIENT_ID,
     client_secret=CLIENT_SECRET,
     authorize_url=AUTH_URL,
-    # access_token_url=TOKEN_URL,
-    # api_base_url=API_BASE,
     client_kwargs={"scope": SCOPE}
-
-    #server_metadata_url=CONF_URL, 
-    # Setting this to True allows Authlib to manage the nonce in the session automatically
-    #id_token_params={"nonce": None, "validate_nonce": False}
 )
 
 # ------------------------------------------------------------------
@@ -203,9 +197,9 @@ def callback():
         print(f"CALLBACK ERROR: {e}")
         return f"Authentication failed: {e}", 400
 
-    # Persist token + user info
     upsert_qbo_token(token, realm_id, intuit_email, intuit_user_id)
-    return "OIDC token + user info received successfully!"
+    print("OIDC token + user info received successfully!")
+    return redirect(url_for("peek"))
 
 
 # ------------------------------------------------------------------
