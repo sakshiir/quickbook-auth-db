@@ -158,25 +158,25 @@ def start():
     session.permanent = True
     session["tenant_id"] = tenant_id
 
-    oauth_redirect = intuit.authorize_redirect(
-        REDIRECT_URI, prompt="consent"
-    ).location
-
-    return render_template_string(
-        """
+    return render_template_string("""
         <!doctype html>
         <html>
           <body style="font-family: system-ui; text-align:center; margin-top:20%">
             <p>Please wait… Connecting to QuickBooks</p>
             <script>
               setTimeout(function() {
-                window.location.href = "{{ url }}";
+                window.location.href = "/oauth";
               }, 1500);
             </script>
           </body>
         </html>
-        """,
-        url=oauth_redirect,
+    """)
+
+@APP.route("/oauth")
+def oauth_start():
+    return intuit.authorize_redirect(
+        REDIRECT_URI,
+        prompt="consent"
     )
 
 @APP.route("/callback")
