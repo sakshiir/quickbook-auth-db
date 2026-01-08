@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 from dotenv import load_dotenv
-from flask import Flask, request, redirect, render_template_string, session
+from flask import Flask, request, render_template_string
 from authlib.integrations.flask_client import OAuth
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -15,7 +15,7 @@ import psycopg2
 load_dotenv()
 
 APP = Flask(__name__)
-APP.secret_key = os.environ.get("FLASK_SECRET_KEY")
+APP.secret_key = os.getenv("FLASK_SECRET_KEY")
 
 APP.wsgi_app = ProxyFix(APP.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -155,38 +155,44 @@ def start():
     if not tenant_id:
         return "Missing tenant_id", 400
 
-    session.permanent = True
-    session["tenant_id"] = tenant_id
-
-    return render_template_string("""
+    return render_template_string(
+        """
         <!doctype html>
         <html>
           <body style="font-family: system-ui; text-align:center; margin-top:20%">
             <p>Please wait… Connecting to QuickBooks</p>
             <script>
               setTimeout(function() {
-                window.location.href = "/oauth";
-              }, 1500);
+                window.location.href = "/oauth?tenant_id={{ tenant_id }}";
+              }, 1200);
             </script>
           </body>
         </html>
-    """)
+        """,
+        tenant_id=tenant_id,
+    )
 
 @APP.route("/oauth")
 def oauth_start():
+    tenant_id = request.args.get("tenant_id")
+    if not tenant_id:
+        return "Missing tenant context", 400
+
+    # IMPORTANT: tenant_id is passed via OAuth state
     return intuit.authorize_redirect(
         REDIRECT_URI,
-        prompt="consent"
+        state=tenant_id,
+        prompt="consent",
     )
 
 @APP.route("/callback")
 def callback():
     code = request.args.get("code")
     realm_id = request.args.get("realmId")
-    tenant_id = session.get("tenant_id")
+    tenant_id = request.args.get("state")  # ← FIX
 
-    if not code or not tenant_id:
-        return "Invalid OAuth state", 400
+    if not code or not realm_id or not tenant_id:
+        return "Invalid OAuth response", 400
 
     try:
         response = requests.post(
@@ -224,7 +230,7 @@ def callback():
         )
 
     except Exception as e:
-        print(f"OAuth callback error: {e}")
+        APP.logger.exception("OAuth callback failure")
         return "Authentication failed", 500
 
     return render_template_string(
@@ -236,7 +242,7 @@ def callback():
             <script>
               setTimeout(function() {
                 window.location.href = "{{ url }}";
-              }, 1500);
+              }, 1200);
             </script>
           </body>
         </html>
@@ -246,3 +252,4 @@ def callback():
 
 if __name__ == "__main__":
     APP.run(host="127.0.0.1", port=5000)
+    
