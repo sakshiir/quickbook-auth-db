@@ -41,7 +41,7 @@ SCOPE = "com.intuit.quickbooks.accounting openid email profile"
 
 RETURN_URL = (
     "https://datachamp-finance-58111015615.asia-south1.run.app/"
-    "dashboard/sourceintegration"
+    "dashboard/sourceintegration?source=quickbooks"
 )
 
 # ------------------------------------------------------------------
